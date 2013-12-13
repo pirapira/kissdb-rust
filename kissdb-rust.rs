@@ -174,4 +174,7 @@ fn main()
 {
     let db = kissdb_open(&Path::new("test.db"), RWReplace, 1024, 8, size_of::<u64>() as u64);
     kissdb_close(db.unwrap());
+    let db_r = kissdb_open(&Path::new("test.db"), ReadOnly, 4, 8, size_of::<u64>() as u64);
+    let db_r = db_r.unwrap();
+    println(db_r.hash_table_size.to_str());
 }
