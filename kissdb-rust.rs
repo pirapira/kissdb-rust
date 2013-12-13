@@ -146,27 +146,32 @@ trait File2 {
 }
 
 impl File2 for File {
-fn read_one_hash_table(&mut self,
-                       hash_table_size : u64) -> Option<~[u64]> {
-    let bs = (hash_table_size + 1) as uint * size_of::<u64>();
-    let mut buf = std::vec::from_elem(bs, 0 as u8);
-    let mut result = std::vec::from_elem((hash_table_size + 1) as uint, 0 as u64);
-    match self.read(buf) {
-        None => None,
-        Some(buf_size) if buf_size == bs => {
-            let mut br = std::io::mem::BufReader::new(buf);
-            for i in range(0, hash_table_size + 1) {
-                result[i] = br.read_le_u64();
+        fn read_one_hash_table(&mut self,
+                               hash_table_size : u64) -> Option<~[u64]> {
+            let bs = (hash_table_size + 1) as uint * size_of::<u64>();
+            let mut buf = std::vec::from_elem(bs, 0 as u8);
+            let mut result = std::vec::from_elem((hash_table_size + 1) as uint, 0 as u64);
+            match self.read(buf) {
+                None => None,
+                Some(buf_size) if buf_size == bs => {
+                    let mut br = std::io::mem::BufReader::new(buf);
+                    for i in range(0, hash_table_size + 1) {
+                        result[i] = br.read_le_u64();
+                    }
+                    Some((result))
+                },
+                _ => None
             }
-            Some((result))
-        },
-        _ => None
-    }
+        }
 }
+
+fn kissdb_close(~db : ~Kissdb) {
 }
 
 
 
 fn main()
 {
+    let db = kissdb_open(&Path::new("test.db"), RWReplace, 1024, 8, size_of::<u64>() as u64);
+    kissdb_close(db.unwrap());
 }
