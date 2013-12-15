@@ -11,11 +11,12 @@ static version: u8 = 1;
 // some definitions from kissdb.h
 
 struct Kissdb {
-  hash_table_size : u64,
-  key_size : u64,
-  value_size : u64,
-  hash_tables : ~[u64],
-  f : std::io::fs::File
+    hash_table_size : u64,
+    key_size : u64,
+    value_size : u64,
+    num_hash_tables : u64,
+    hash_tables : ~[u64],
+    f : std::io::fs::File
 }
 
 enum Error {
@@ -33,11 +34,11 @@ enum OpenMode {
 }
 
 
-fn kissdb_hash(b :&[u8], len: u64) -> u64
+fn kissdb_hash(b : &~[u8]) -> u64
 {
     let mut hash : u64 = 5381;
-    for i in range (0, len) {
-        hash = ((hash << 5) + hash) + (b[i] as u64);
+    for &bx in b.iter() {
+        hash = ((hash << 5) + hash) + (bx as u64);
     }
     return hash
 }
@@ -133,48 +134,155 @@ fn kissdb_open(
 
          // construct h somehow
          return Some(~Kissdb {hash_table_size : hash_table_size,
-                         key_size : key_size,
-                         value_size : value_size,
-                         hash_tables : hash_tables,
-                         f : f})
+                              key_size : key_size,
+                              value_size : value_size,
+                              num_hash_tables : num_hash_tables,
+                              hash_tables : hash_tables,
+                              f : f})
         }
     }
 }
 
 trait File2 {
     fn read_one_hash_table(&mut self, u64) -> Option<~[u64]>;
+    fn write_one_hash_table(&mut self, &[u64]);
 }
 
 impl File2 for File {
-        fn read_one_hash_table(&mut self,
-                               hash_table_size : u64) -> Option<~[u64]> {
-            let bs = (hash_table_size + 1) as uint * size_of::<u64>();
-            let mut buf = std::vec::from_elem(bs, 0 as u8);
-            let mut result = std::vec::from_elem((hash_table_size + 1) as uint, 0 as u64);
-            match self.read(buf) {
-                None => None,
-                Some(buf_size) if buf_size == bs => {
-                    let mut br = std::io::mem::BufReader::new(buf);
-                    for i in range(0, hash_table_size + 1) {
-                        result[i] = br.read_le_u64();
-                    }
-                    Some((result))
-                },
-                _ => None
-            }
+    fn read_one_hash_table(&mut self,
+                           hash_table_size : u64) -> Option<~[u64]> {
+        let bs = (hash_table_size + 1) as uint * size_of::<u64>();
+        let mut buf = std::vec::from_elem(bs, 0 as u8);
+        let mut result = std::vec::from_elem((hash_table_size + 1) as uint, 0 as u64);
+        match self.read(buf) {
+            None => None,
+            Some(buf_size) if buf_size == bs => {
+                let mut br = std::io::mem::BufReader::new(buf);
+                for i in range(0, hash_table_size + 1) {
+                    result[i] = br.read_le_u64();
+                }
+                Some((result))
+            },
+            _ => None
         }
+    }
+    fn write_one_hash_table(&mut self,
+                            ht : &[u64]) {
+        for &x in ht.iter() {
+            self.write_le_u64(x);
+        }
+    }
 }
 
 fn kissdb_close(~db : ~Kissdb) {
+    //throwing away
 }
 
+trait Kdb {
+    fn kissdb_get(&mut self, &~[u8]) -> Option<~[u8]>;
+    fn kissdb_put(&mut self, key : &~[u8], value : &[u8]) -> bool;
+}
 
+impl Kdb for Kissdb {
+    fn kissdb_get(&mut self, key : &~[u8]) -> Option<~[u8]> {
+        let hash = kissdb_hash(key) % self.hash_table_size;
+        let hash_tables = &self.hash_tables;
+        for i in range(0, self.num_hash_tables) {
+            let offset : i64 = hash_tables[i * (self.hash_table_size + 1) + hash] as i64;
+            if (offset == 0) { return None }; // yeah, 0 is being special. never used normally.
+            self.f.seek(offset as i64, SeekSet);
+
+            let klen = self.key_size as uint;
+            // isn't compare available?? read_bytes available
+            let tmp = self.f.read_bytes(klen);
+
+            if std::vec::bytes::memcmp(key, &tmp) == 0 {
+                return Some(self.f.read_bytes(self.value_size as uint))
+            }
+        }
+        return None
+    }
+
+    fn kissdb_put(&mut self, key : &~[u8], value : &[u8]) -> bool
+    {
+        let hash = kissdb_hash(key) % self.hash_table_size;
+        let mut lasthtoffset : u64 = ((size_of::<u64>() * 3) + 4) as u64;
+        let mut htoffset = lasthtoffset;
+
+        for i in range(0, self.num_hash_tables) {
+            let offset : i64 = self.hash_tables[(self.hash_table_size + 1) * i + hash] as i64;
+		    if (offset != 0) { // yes, 0 is treated special. 0 will never used normally
+			    /* rewrite if already exists */
+                self.f.seek(offset, SeekSet);
+
+			    let klen = self.key_size as uint;
+                let tmp = self.f.read_bytes(klen);
+                if std::vec::bytes::memcmp(key, &tmp) == 0 {
+                    self.f.write(value);
+				    self.f.flush();
+				    return true; /* success */
+                }
+                // put_no_match_next_hash_table:
+        	    lasthtoffset = htoffset;
+		        htoffset = self.hash_tables[(self.hash_table_size + 1) * i + self.hash_table_size];
+                //cmp != , should be put_no_match_next_hash_table
+		    } else {
+			    /* add if an empty hash table slot is discovered */
+                self.f.seek(0, SeekEnd);
+	            let endoffset : u64 = self.f.tell();
+
+                self.f.write(*key);
+                self.f.write(value);
+
+                self.f.seek(htoffset as i64 + (size_of::<u64>() as i64 * hash as i64), SeekSet);
+                self.f.write_le_u64(endoffset);
+			    self.hash_tables[(self.hash_table_size + 1) * i + hash] = endoffset;
+
+			    self.f.flush();
+
+			    return true; /* success */
+		    }
+	    }
+
+	    /* if no existing slots, add a new page of hash table entries */
+        self.f.seek(0, SeekEnd);
+	    let endoffset = self.f.tell();
+
+        let mut new_table : ~[u64] = std::vec::from_elem(self.hash_table_size as uint + 1, 0 as u64);
+        let hash_table_size_bytes : u64 = size_of::<u64>() as u64 * (self.hash_table_size + 1);
+        new_table[hash] = endoffset + hash_table_size_bytes; // where key, value are to be written
+        self.f.write_one_hash_table(new_table);
+        let longer = std::vec::append(self.hash_tables.clone(), new_table); // slow!!
+        self.hash_tables = longer;
+
+        self.f.write(*key);
+        self.f.write(value);
+
+        // what is happening here??, aha, keep track to find this bit.
+	    if (self.num_hash_tables > 0) {
+            self.f.seek(lasthtoffset as i64 + (size_of::<u64>() as i64 * self.hash_table_size as i64), SeekSet);
+            self.f.write_le_u64(endoffset);
+            // mimick rereading
+            self.hash_tables[((self.hash_table_size + 1) * (self.num_hash_tables - 1)) + self.hash_table_size] = endoffset;
+	    }
+
+        self.num_hash_tables = self.num_hash_tables + 1;
+        self.f.flush();
+	    return true; /* success */
+    }
+
+}
 
 fn main()
 {
-    let db = kissdb_open(&Path::new("test.db"), RWReplace, 1024, 8, size_of::<u64>() as u64);
-    kissdb_close(db.unwrap());
-    let db_r = kissdb_open(&Path::new("test.db"), ReadOnly, 4, 8, size_of::<u64>() as u64);
-    let db_r = db_r.unwrap();
-    println(db_r.hash_table_size.to_str());
+    let mut db = kissdb_open(&Path::new("test.db"), RWReplace, 1024, 8, size_of::<u64>() as u64).unwrap();
+    let key : ~[u8] = ~[0 as u8,0,0,4];
+    let value : ~[u8] = ~[0,0,0,100];
+    db.kissdb_put(&key,value);
+    println(db.kissdb_get(&key).to_str());
+
+    // kissdb_close(db.unwrap());
+    // let db_r = kissdb_open(&Path::new("test.db"), ReadOnly, 4, 8, size_of::<u64>() as u64);
+    // let db_r = db_r.unwrap();
+    // println(db_r.hash_table_size.to_str());
 }
