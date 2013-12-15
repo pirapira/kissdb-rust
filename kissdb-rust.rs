@@ -156,10 +156,6 @@ impl File2 for File {
     }
 }
 
-fn kissdb_close(~db : ~Kissdb) {
-    //throwing away
-}
-
 trait Kdb {
     fn kissdb_get(&mut self, &~[u8]) -> Option<~[u8]>;
     fn kissdb_put(&mut self, key : &~[u8], value : &[u8]) -> bool;
@@ -263,56 +259,55 @@ impl Kdb for Kissdb {
 fn main()
 {
     println("Opening new empty database test.db...");
-    let mut db = kissdb_open(&Path::new("test.db"), RWReplace, 1024, 8, size_of::<u64>() as u64).unwrap();
+    {
+        let mut db = kissdb_open(&Path::new("test.db"), RWReplace, 1024, 8, size_of::<u64>() as u64).unwrap();
 
-    println("Adding and then re-getting 10000 64-byte values...");
+        println("Adding and then re-getting 10000 64-byte values...");
 
-    let mut v : [u8, .. 8] = [0,0,0,0,0,0,0,0];
+        let mut v : [u8, .. 8] = [0,0,0,0,0,0,0,0];
 
-    for i in range(0, 10000) {
-        for j in range(0, 8) {
-            v[j] = i as u8;
+        for i in range(0, 10000) {
+            for j in range(0, 8) {
+                v[j] = i as u8;
+            }
+            let mut key = std::io::mem::MemWriter::new();
+            key.write_le_u64(i as u64);
+            db.kissdb_put(key.inner_ref(), v);
+            let gotten = db.kissdb_get(key.inner_ref()).unwrap();
+            for j in range(0, 8) {
+                if gotten[j] != i as u8 { fail!() }
+            }
         }
-        let mut key = std::io::mem::MemWriter::new();
-        key.write_le_u64(i as u64);
-        db.kissdb_put(key.inner_ref(), v);
-        let gotten = db.kissdb_get(key.inner_ref()).unwrap();
-        for j in range(0, 8) {
-            if gotten[j] != i as u8 { fail!() }
+        println("Getting 10000 64-byte values...");
+
+        for i in range(0, 10000) {
+            let mut key = std::io::mem::MemWriter::new();
+            key.write_le_u64(i as u64);
+            let gotten = db.kissdb_get(key.inner_ref()).unwrap();
+            for j in range(0,8) {
+                if gotten[j] != i as u8 { fail!() }
+            }
         }
+
+        println("closing and re-opening database in read-only mode...");
     }
 
-    println("Getting 10000 64-byte values...");
+    {
+        let mut db = kissdb_open(&Path::new("test.db"), ReadOnly, 1024, 8, size_of::<u64>() as u64).unwrap();
 
-    for i in range(0, 10000) {
-        let mut key = std::io::mem::MemWriter::new();
-        key.write_le_u64(i as u64);
-        let gotten = db.kissdb_get(key.inner_ref()).unwrap();
-        for j in range(0,8) {
-            if gotten[j] != i as u8 { fail!() }
-        }
-    }
+        println("Getting 10000 64-byte values...");
 
-    println("closing and re-opening database in read-only mode...");
-
-    kissdb_close(db);
-
-    let mut db = kissdb_open(&Path::new("test.db"), ReadOnly, 1024, 8, size_of::<u64>() as u64).unwrap();
-
-    println("Getting 10000 64-byte values...");
-
-    for i in range(0, 10000) {
-        let mut key = std::io::mem::MemWriter::new();
-        key.write_le_u64(i as u64);
-        let gotten = db.kissdb_get(key.inner_ref()).unwrap();
-        for j in range(0,8) {
-            if gotten[j] != i as u8 { fail!() }
+        for i in range(0, 10000) {
+            let mut key = std::io::mem::MemWriter::new();
+            key.write_le_u64(i as u64);
+            let gotten = db.kissdb_get(key.inner_ref()).unwrap();
+            for j in range(0,8) {
+                if gotten[j] != i as u8 { fail!() }
+            }
         }
     }
 
 	println("Iterator not implemented ...");
-
-    kissdb_close(db);
 
     println("All tests OK!");
 }
