@@ -1,12 +1,14 @@
 kissdb-rust
 ===========
 
-kissdb ported to rust
+[(Keep It) Simple and Stupid Database](https://github.com/zerotier/kissdb.git) ported to [rust](https://github.com/mozilla/rust).
 
-the original project here: https://github.com/zerotier/kissdb.git
+Currently, put and get have been implemented.  Iterator methods to come.
 
 To perform some tests:
 
-	% rustc ./kissdb-rust.rs
+    % git clone https://github.com/pirpaira/kissdb-rust
+    % cd kissdb-rust
+	% rustc ./kissdb-rust.rs # assuming master branch of rust
     % ./kissdb-rust
 
