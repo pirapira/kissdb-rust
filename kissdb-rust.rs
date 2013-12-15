@@ -3,7 +3,7 @@ use std::io::{ReadWrite};
 use std::io::{SeekEnd, SeekSet};
 use std::io::fs::File;
 use std::mem::size_of;
-
+use std::io::Decorator;
 
 static version: u8 = 1;
 
@@ -132,6 +132,8 @@ fn kissdb_open(
              }
          }
 
+         debug!("key_size = {:s}", key_size.to_str());
+
          // construct h somehow
          return Some(~Kissdb {hash_table_size : hash_table_size,
                               key_size : key_size,
@@ -185,6 +187,7 @@ trait Kdb {
 
 impl Kdb for Kissdb {
     fn kissdb_get(&mut self, key : &~[u8]) -> Option<~[u8]> {
+        if key.len() != self.key_size as uint { return None }
         let hash = kissdb_hash(key) % self.hash_table_size;
         let hash_tables = &self.hash_tables;
         for i in range(0, self.num_hash_tables) {
@@ -205,6 +208,8 @@ impl Kdb for Kissdb {
 
     fn kissdb_put(&mut self, key : &~[u8], value : &[u8]) -> bool
     {
+        if key.len() != self.key_size as uint { fail!() }
+        if value.len() != self.value_size as uint { fail!() }
         let hash = kissdb_hash(key) % self.hash_table_size;
         let mut lasthtoffset : u64 = ((size_of::<u64>() * 3) + 4) as u64;
         let mut htoffset = lasthtoffset;
@@ -231,6 +236,7 @@ impl Kdb for Kissdb {
                 self.f.seek(0, SeekEnd);
 	            let endoffset : u64 = self.f.tell();
 
+                // debug!("endoffset = {:s}",endoffset.to_str());
                 self.f.write(*key);
                 self.f.write(value);
 
@@ -245,6 +251,7 @@ impl Kdb for Kissdb {
 	    }
 
 	    /* if no existing slots, add a new page of hash table entries */
+        debug!("add new page");
         self.f.seek(0, SeekEnd);
 	    let endoffset = self.f.tell();
 
@@ -255,6 +262,7 @@ impl Kdb for Kissdb {
         let longer = std::vec::append(self.hash_tables.clone(), new_table); // slow!!
         self.hash_tables = longer;
 
+        debug!("writing at {:s}",self.f.tell().to_str());
         self.f.write(*key);
         self.f.write(value);
 
@@ -275,14 +283,57 @@ impl Kdb for Kissdb {
 
 fn main()
 {
+    println("Opening new empty database test.db...");
     let mut db = kissdb_open(&Path::new("test.db"), RWReplace, 1024, 8, size_of::<u64>() as u64).unwrap();
-    let key : ~[u8] = ~[0 as u8,0,0,4];
-    let value : ~[u8] = ~[0,0,0,100];
-    db.kissdb_put(&key,value);
-    println(db.kissdb_get(&key).to_str());
 
-    // kissdb_close(db.unwrap());
-    // let db_r = kissdb_open(&Path::new("test.db"), ReadOnly, 4, 8, size_of::<u64>() as u64);
-    // let db_r = db_r.unwrap();
-    // println(db_r.hash_table_size.to_str());
+    println("Adding and then re-getting 10000 64-byte values...");
+
+    let mut v : [u8, .. 8] = [0,0,0,0,0,0,0,0];
+
+    for i in range(0, 10000) {
+        for j in range(0, 8) {
+            v[j] = i as u8;
+        }
+        let mut key = std::io::mem::MemWriter::new();
+        key.write_le_u64(i as u64);
+        db.kissdb_put(key.inner_ref(), v);
+        let gotten = db.kissdb_get(key.inner_ref()).unwrap();
+        for j in range(0, 8) {
+            if gotten[j] != i as u8 { fail!() }
+        }
+    }
+
+    println("Getting 10000 64-byte values...");
+
+    for i in range(0, 10000) {
+        let mut key = std::io::mem::MemWriter::new();
+        key.write_le_u64(i as u64);
+        let gotten = db.kissdb_get(key.inner_ref()).unwrap();
+        for j in range(0,8) {
+            if gotten[j] != i as u8 { fail!() }
+        }
+    }
+
+    println("closing and re-opening database in read-only mode...");
+
+    kissdb_close(db);
+
+    let mut db = kissdb_open(&Path::new("test.db"), ReadOnly, 1024, 8, size_of::<u64>() as u64).unwrap();
+
+    println("Getting 10000 64-byte values...");
+
+    for i in range(0, 10000) {
+        let mut key = std::io::mem::MemWriter::new();
+        key.write_le_u64(i as u64);
+        let gotten = db.kissdb_get(key.inner_ref()).unwrap();
+        for j in range(0,8) {
+            if gotten[j] != i as u8 { fail!() }
+        }
+    }
+
+	println("Iterator not implemented ...");
+
+    kissdb_close(db);
+
+    println("All tests OK!");
 }
