@@ -20,10 +20,10 @@ struct Kissdb {
 }
 
 enum OpenMode {
-  ReadOnly,
-  RW,
-  RWCreate,
-  RWReplace
+    ReadOnly,
+    RW,
+    RWCreate,
+    RWReplace
 }
 
 fn kissdb_hash(b : &~[u8]) -> u64
@@ -41,38 +41,38 @@ fn kissdb_open(
     mut hash_table_size : u64,
     mut key_size : u64,
     mut value_size : u64
-    ) -> Option<~ Kissdb>
+        ) -> Option<~ Kissdb>
 {
     let (mode, access) : (FileMode, FileAccess) =
         match orig_mode {
-            ReadOnly =>  (Open, Read), // rb
-            RW => (Open, ReadWrite), // r+b
-            RWCreate =>  (Open, ReadWrite), // r+b
-            RWReplace => (Truncate, ReadWrite) // w+b
-        };
+        ReadOnly =>  (Open, Read), // rb
+        RW => (Open, ReadWrite), // r+b
+        RWCreate =>  (Open, ReadWrite), // r+b
+        RWReplace => (Truncate, ReadWrite) // w+b
+    };
     let mut f_ : Option<File>
         = std::io::fs::File::open_mode(path, mode, access);
 
     if f_.is_none() {
         match (orig_mode) {
             RWCreate =>
-            f_ = std::io::fs::File::open_mode(path, Truncate, ReadWrite), // w+b
+                f_ = std::io::fs::File::open_mode(path, Truncate, ReadWrite), // w+b
             _ => f_ = f_
         }
     };
 
     let mut f =
         match f_ {
-            None => return None,
-            Some (f) => f
-        };
+        None => return None,
+        Some (f) => f
+    };
     let kissdb_header_size : u64 = ((size_of::<u64>() * 3) + 4) as u64;
 
     f.seek(0, SeekEnd);
     if (f.tell() < kissdb_header_size) {
         if hash_table_size > 0 && key_size > 0
             && value_size >0
-        {
+            {
             f.seek(0, SeekSet);
             let tmp2 : [u8, ..4] = ['K' as u8, 'd' as u8, 'R' as u8, version];
             f.write(tmp2);
@@ -81,11 +81,11 @@ fn kissdb_open(
             f.write_le_u64(value_size);
             f.flush();
         }
-        else {
+            else {
             fail!()
         }
     }
-    else {
+        else {
         f.seek(0, SeekSet);
         let mut tmp2 : [u8, ..4] = [0,0,0,0];
         if f.read(tmp2) != Some(4) { fail! (); }
@@ -102,14 +102,14 @@ fn kissdb_open(
 
     // do we do realloc in rust? with append, apparently.
     while({h = f.read_one_hash_table(hash_table_size); h.is_some()})
-    {
+        {
         let httmp = h.unwrap();
         hash_tables = std::vec::append(hash_tables, httmp);
         num_hash_tables = num_hash_tables + 1;
         if (httmp[hash_table_size] > 0) {
             f.seek(httmp[hash_table_size] as i64, SeekSet)
         }
-        else {
+            else {
             break;
         }
     }
@@ -183,7 +183,7 @@ impl Kdb for Kissdb {
     }
 
     fn kissdb_put(&mut self, key : &~[u8], value : &[u8]) -> bool
-    {
+        {
         if key.len() != self.key_size as uint { fail!() }
         if value.len() != self.value_size as uint { fail!() }
         let hash = kissdb_hash(key) % self.hash_table_size;
@@ -192,25 +192,25 @@ impl Kdb for Kissdb {
 
         for i in range(0, self.num_hash_tables) {
             let offset : i64 = self.hash_tables[(self.hash_table_size + 1) * i + hash] as i64;
-		    if (offset != 0) { // yes, 0 is treated special. 0 will never used normally
-			    /* rewrite if already exists */
+            if (offset != 0) { // yes, 0 is treated special. 0 will never used normally
+                /* rewrite if already exists */
                 self.f.seek(offset, SeekSet);
 
-			    let klen = self.key_size as uint;
+                let klen = self.key_size as uint;
                 let tmp = self.f.read_bytes(klen);
                 if std::vec::bytes::memcmp(key, &tmp) == 0 {
                     self.f.write(value);
-				    self.f.flush();
-				    return true; /* success */
+                    self.f.flush();
+                    return true; /* success */
                 }
                 // put_no_match_next_hash_table:
-        	    lasthtoffset = htoffset;
-		        htoffset = self.hash_tables[(self.hash_table_size + 1) * i + self.hash_table_size];
+                lasthtoffset = htoffset;
+                htoffset = self.hash_tables[(self.hash_table_size + 1) * i + self.hash_table_size];
                 //cmp != , should be put_no_match_next_hash_table
-		    } else {
-			    /* add if an empty hash table slot is discovered */
+            } else {
+                /* add if an empty hash table slot is discovered */
                 self.f.seek(0, SeekEnd);
-	            let endoffset : u64 = self.f.tell();
+                let endoffset : u64 = self.f.tell();
 
                 // debug!("endoffset = {:s}",endoffset.to_str());
                 self.f.write(*key);
@@ -218,18 +218,18 @@ impl Kdb for Kissdb {
 
                 self.f.seek(htoffset as i64 + (size_of::<u64>() as i64 * hash as i64), SeekSet);
                 self.f.write_le_u64(endoffset);
-			    self.hash_tables[(self.hash_table_size + 1) * i + hash] = endoffset;
+                self.hash_tables[(self.hash_table_size + 1) * i + hash] = endoffset;
 
-			    self.f.flush();
+                self.f.flush();
 
-			    return true; /* success */
-		    }
-	    }
+                return true; /* success */
+            }
+        }
 
-	    /* if no existing slots, add a new page of hash table entries */
+        /* if no existing slots, add a new page of hash table entries */
         debug!("add new page");
         self.f.seek(0, SeekEnd);
-	    let endoffset = self.f.tell();
+        let endoffset = self.f.tell();
 
         let mut new_table : ~[u64] = std::vec::from_elem(self.hash_table_size as uint + 1, 0 as u64);
         let hash_table_size_bytes : u64 = size_of::<u64>() as u64 * (self.hash_table_size + 1);
@@ -242,16 +242,16 @@ impl Kdb for Kissdb {
         self.f.write(*key);
         self.f.write(value);
 
-	    if (self.num_hash_tables > 0) {
+        if (self.num_hash_tables > 0) {
             self.f.seek(lasthtoffset as i64 + (size_of::<u64>() as i64 * self.hash_table_size as i64), SeekSet);
             self.f.write_le_u64(endoffset);
             // mimick rereading
             self.hash_tables[((self.hash_table_size + 1) * (self.num_hash_tables - 1)) + self.hash_table_size] = endoffset;
-	    }
+        }
 
         self.num_hash_tables = self.num_hash_tables + 1;
         self.f.flush();
-	    return true; /* success */
+        return true; /* success */
     }
 
 }
@@ -307,7 +307,7 @@ fn main()
         }
     }
 
-	println("Iterator not implemented ...");
+    println("Iterator not implemented ...");
 
     println("All tests OK!");
 }
