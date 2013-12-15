@@ -19,20 +19,12 @@ struct Kissdb {
     f : std::io::fs::File
 }
 
-enum Error {
-  ErrorIO,
-  ErrorMalloc,
-  InvalidParameters,
-  CorruptDbFile
-}
-
 enum OpenMode {
   ReadOnly,
   RW,
   RWCreate,
   RWReplace
 }
-
 
 fn kissdb_hash(b : &~[u8]) -> u64
 {
@@ -43,10 +35,6 @@ fn kissdb_hash(b : &~[u8]) -> u64
     return hash
 }
 
-// either
-// 1. use the c95 based alloc, realloc and free
-// 2. use more rustic something
-// maybe trying 2. gives me more knowledge
 fn kissdb_open(
     path : &Path,
     orig_mode : OpenMode,
@@ -73,77 +61,69 @@ fn kissdb_open(
         }
     };
 
-    match f_ {
-        None => return None,
-        Some (mut f) =>
-        {let kissdb_header_size : u64 = ((size_of::<u64>() * 3) + 4) as u64;
+    let mut f =
+        match f_ {
+            None => return None,
+            Some (f) => f
+        };
+    let kissdb_header_size : u64 = ((size_of::<u64>() * 3) + 4) as u64;
 
-         f.seek(0, SeekEnd);
-         if (f.tell() < kissdb_header_size) {
-             if hash_table_size > 0 && key_size > 0
-                 && value_size >0
-             {
-                 f.seek(0, SeekSet);
-                 let tmp2 : [u8, ..4] = ['K' as u8, 'd' as u8, 'R' as u8, version];
-                 f.write(tmp2);
-                 f.write_le_u64(hash_table_size);
-                 f.write_le_u64(key_size);
-                 f.write_le_u64(value_size);
-                 f.flush();
-             }
-             else {
-                 fail!()
-             }
-         }
-         else {
-             f.seek(0, SeekSet);
-             let mut tmp2 : [u8, ..4] = [0,0,0,0];
-             if f.read(tmp2) != Some(4) { fail! (); }
-             if tmp2 != ['K' as u8, 'd' as u8, 'R' as u8, version] {fail! ();}
-             hash_table_size = f.read_le_u64();
-             key_size = f.read_le_u64();
-             value_size = f.read_le_u64();
-         }
-
-         // let hash_table_size_bytes : uint = size_of::<u64>() * (hash_table_size + 1) as uint;
-         // let mut httmp = std::vec::from_elem(hash_table_size_bytes, 0 as u8);
-         //         let httmp = do std::at_vec::build::<u64>(None) |push| { for i in range(0, hash_table_size + 1)
-//                  { push (0); }
-        //};
-
-         let mut num_hash_tables = 0;
-
-         // should use at_vec, actually
-         // no, std::vec is OK.  It has appends
-         let mut hash_tables : ~[u64] = std::vec::from_elem(0, 0 as u64);
-         let mut h : Option<~[u64]>;
-
-         // do we do realloc in rust? with append, apparently.
-         while({h = f.read_one_hash_table(hash_table_size); h.is_some()})
-         {
-             let httmp = h.unwrap();
-             hash_tables = std::vec::append(hash_tables, httmp);
-             num_hash_tables = num_hash_tables + 1;
-             if (httmp[hash_table_size] > 0) {
-                 f.seek(httmp[hash_table_size] as i64, SeekSet)
-             }
-             else {
-                 break;
-             }
-         }
-
-         debug!("key_size = {:s}", key_size.to_str());
-
-         // construct h somehow
-         return Some(~Kissdb {hash_table_size : hash_table_size,
-                              key_size : key_size,
-                              value_size : value_size,
-                              num_hash_tables : num_hash_tables,
-                              hash_tables : hash_tables,
-                              f : f})
+    f.seek(0, SeekEnd);
+    if (f.tell() < kissdb_header_size) {
+        if hash_table_size > 0 && key_size > 0
+            && value_size >0
+        {
+            f.seek(0, SeekSet);
+            let tmp2 : [u8, ..4] = ['K' as u8, 'd' as u8, 'R' as u8, version];
+            f.write(tmp2);
+            f.write_le_u64(hash_table_size);
+            f.write_le_u64(key_size);
+            f.write_le_u64(value_size);
+            f.flush();
+        }
+        else {
+            fail!()
         }
     }
+    else {
+        f.seek(0, SeekSet);
+        let mut tmp2 : [u8, ..4] = [0,0,0,0];
+        if f.read(tmp2) != Some(4) { fail! (); }
+        if tmp2 != ['K' as u8, 'd' as u8, 'R' as u8, version] {fail! ();}
+        hash_table_size = f.read_le_u64();
+        key_size = f.read_le_u64();
+        value_size = f.read_le_u64();
+    }
+
+    let mut num_hash_tables = 0;
+
+    let mut hash_tables : ~[u64] = std::vec::from_elem(0, 0 as u64);
+    let mut h : Option<~[u64]>;
+
+    // do we do realloc in rust? with append, apparently.
+    while({h = f.read_one_hash_table(hash_table_size); h.is_some()})
+    {
+        let httmp = h.unwrap();
+        hash_tables = std::vec::append(hash_tables, httmp);
+        num_hash_tables = num_hash_tables + 1;
+        if (httmp[hash_table_size] > 0) {
+            f.seek(httmp[hash_table_size] as i64, SeekSet)
+        }
+        else {
+            break;
+        }
+    }
+
+    debug!("key_size = {:s}", key_size.to_str());
+
+    return Some(~Kissdb {hash_table_size : hash_table_size,
+                         key_size : key_size,
+                         value_size : value_size,
+                         num_hash_tables : num_hash_tables,
+                         hash_tables : hash_tables,
+                         f : f})
 }
+
 
 trait File2 {
     fn read_one_hash_table(&mut self, u64) -> Option<~[u64]>;
@@ -266,7 +246,6 @@ impl Kdb for Kissdb {
         self.f.write(*key);
         self.f.write(value);
 
-        // what is happening here??, aha, keep track to find this bit.
 	    if (self.num_hash_tables > 0) {
             self.f.seek(lasthtoffset as i64 + (size_of::<u64>() as i64 * self.hash_table_size as i64), SeekSet);
             self.f.write_le_u64(endoffset);
