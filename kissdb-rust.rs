@@ -243,7 +243,8 @@ impl Kdb for Kissdb {
 
 }
 
-fn main()
+#[test]
+fn original_test()
 {
     println("Opening new empty database test.db...");
     {
