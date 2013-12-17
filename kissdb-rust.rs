@@ -4,6 +4,7 @@ use std::mem::size_of;
 use std::io::Decorator;
 use std::vec;
 use std::io::mem::{BufReader, MemWriter};
+use std::io::io_error;
 
 static VERSION: u8 = 1;
 
@@ -31,7 +32,7 @@ fn kissdb_hash(b : &[u8]) -> u64 {
     for &bx in b.iter() {
         hash = ((hash << 5) + hash) + (bx as u64);
     }
-    return hash
+    hash
 }
 
 fn kissdb_open(
@@ -126,16 +127,17 @@ impl File2 for File {
     fn read_one_hash_table(&mut self,
                            hash_table_size : u64) -> Option<~[u64]> {
         let bs = (hash_table_size + 1) as uint * size_of::<u64>();
-        let mut buf = vec::from_elem(bs, 0 as u8);
+        let mut err = false;
 
-        match self.read(buf) {
-            Some(buf_size) if buf_size == bs => {
-                let mut br = BufReader::new(buf);
+        io_error::cond.trap(|_| err = true ).inside(|| {
+            let buf = self.read_bytes(bs);
+            let mut br = BufReader::new(buf);
+            if err { None }
+            else {
                 Some(vec::from_fn((hash_table_size + 1) as uint,
                                   |_| br.read_le_u64()))
-            },
-            _ => None
-        }
+            }
+        })
     }
     fn write_one_hash_table(&mut self, ht : &[u64]) {
         for &x in ht.iter() {
@@ -236,7 +238,7 @@ impl Kdb for Kissdb {
 
         self.num_hash_tables = self.num_hash_tables + 1;
         self.f.flush();
-        return true; /* success */
+        true /* success */
     }
 
 }
