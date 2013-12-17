@@ -9,6 +9,6 @@ To perform some tests:
 
     % git clone https://github.com/pirpaira/kissdb-rust
     % cd kissdb-rust
-	% rustc ./kissdb-rust.rs # assuming master branch of rust
+    % rustc --test ./kissdb-rust.rs # assuming master branch of rust
     % ./kissdb-rust
 
